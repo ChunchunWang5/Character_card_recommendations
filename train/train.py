@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from train.dataset import TrainDataset, TestDataset
+from dataset import TrainDataset, TestDataset
 from model import TipsyModel, tipsy_unsup_loss
 from transformers import AutoTokenizer
 import os
@@ -18,6 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 import random
 import pickle
 import time
+from utils.mysql_utils import query_data, data_process
 
 
 def seed_everything(seed=42):
@@ -111,12 +112,20 @@ def load_train_data_unsupervised(tokenizer, args):
             logger.info("len of train data:{}".format(len(feature_list)))
             return feature_list
     feature_list = []
-    with open(args.train_file, 'r', encoding='utf8') as f:
-        lines = f.readlines()
-        # lines = lines[:100]
+    if args.file_type == 'local':
+        with open(args.train_file, 'r', encoding='utf8') as f:
+            lines = f.readlines()
+           # lines = lines[:100]
+            logger.info("len of train data:{}".format(len(lines)))
+            for line in tqdm(lines):
+                line = line.strip()
+                feature = tokenizer([line, line], max_length=args.max_len, truncation=True, padding='max_length', return_tensors='pt')
+                feature_list.append(feature)
+    if args.file_type == 'mysql':
+        lines = query_data(host=args.host, port=3306, database=args.database, user=args.user, password=args.password,query=args.query)
         logger.info("len of train data:{}".format(len(lines)))
         for line in tqdm(lines):
-            line = line.strip()
+            line = data_process(line)
             feature = tokenizer([line, line], max_length=args.max_len, truncation=True, padding='max_length', return_tensors='pt')
             feature_list.append(feature)
     with open(train_file_cache, 'wb') as f:
@@ -166,11 +175,11 @@ def main(args):
     tokenizer = AutoTokenizer.from_pretrained(args.pretrain_model_path)
     assert args.pooler in ['cls', 'pooler', 'last-avg', 'first-last-avg'], \
         "pooler should in ['cls', 'pooler', 'last-avg', 'first-last-avg']"
-    model = TipsyModel(pretrained_model=args.pretrain_model_path, pooling=args.pooler, dropout=args.dropout)
+    model = TipsyModel(pretrained_model=args.pretrain_model_path, pooling=args.pooler, dropout=args.dropout).to(device=args.device)
     if args.do_train:
         assert args.train_mode in ['unsupervise', 'supervise'], \
             "train_mode should in ['unsupervise', 'supervise']"
-        if args.train_mode is "unsupervise":
+        if args.train_mode == "supervise":
             train_data = load_train_data_supervised(tokenizer, args)
         elif args.train_mode == 'unsupervise':
             train_data = load_train_data_unsupervised(tokenizer, args)
@@ -197,17 +206,18 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", default='gpu', choices=['gpu', 'cpu'], help='gpu or cpu')
+    parser.add_argument("--device", default='cuda', choices=['cuda', 'cpu'], help='cuda or cpu')
     parser.add_argument("--output_path", type=str, default="output")
     parser.add_argument("--lr", type=float, default=3e-5)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--batch_size_train", type=int, default=256)
+    parser.add_argument("--batch_size_eval", type=int, default=32)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--eval_step", type=int, default=100, help="every eval_step to evaluate model")
     parser.add_argument("--max_len", type=int, default=64, help="max length of input")
     parser.add_argument("--seed", type=int, default=42, help="random seed")
-    parser.add_argument("--train_file", type=str, default="data/nli_for_simcse.csv")
+    parser.add_argument("--train_file", type=str, default="data/nli_for_simcse.csv", help="Train file. If file-type==mysql, unnecessary")
     parser.add_argument("--dev_file", type=str, default="data/stsbenchmark/sts-dev.csv")
     parser.add_argument("--test_file", type=str, default="data/stsbenchmark/sts-test.csv")
     parser.add_argument("--pretrain_model_path", type=str,
@@ -218,13 +228,19 @@ if __name__ == "__main__":
     parser.add_argument("--overwrite_cache", action='store_true', default=False, help="overwrite cache")
     parser.add_argument("--do_train", action='store_true', default=True)
     parser.add_argument("--do_predict", action='store_true', default=True)
+    parser.add_argument("--file_type", type=str, default="mysql", help="mysql or local")
+    parser.add_argument("--host", type=str, help="mysql host")
+    parser.add_argument("--database", type=str, help="mysql database")
+    parser.add_argument("--user", type=str, help="mysql username")
+    parser.add_argument("--password", type=str, help="mysql password")
+    parser.add_argument("--query", type=str, help="mysql query")
 
     args = parser.parse_args()
     seed_everything(args.seed)
-    args.device = 'gpu' if torch.cuda.is_available() else 'cpu'
-    args.output_path = join(args.output_path, args.train_mode, f"bsz-{args.batch_size}-lr-{args.lr}-dropout-{args.dropout}")
+    args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    args.output_path = join(args.output_path, args.train_mode, f"bsz-{args.batch_size_train}-lr-{args.lr}-dropout-{args.dropout}")
     if not os.path.exists(args.output_path):
-        os.mkdir(args.output_path)
+        os.makedirs(args.output_path)
     cur_time = time.strftime("%Y%m%d%H%M%S", time.localtime())
     logger.add(join(args.output_path, f'train-{cur_time}.log'))
     logger.info(args)

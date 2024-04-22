@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from transformers import AutoModel, AutoConfig, AutoTokenizer
+from transformers import AutoModel, AutoConfig
 
-class TipsyModel(nn.model):
+class TipsyModel(nn.Module):
     "Tipsy无监督模型定义"
 
     def __init__(self, pretrained_model, pooling, dropout=0.3):
