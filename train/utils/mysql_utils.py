@@ -27,3 +27,6 @@ def query_data(host, port, database, user, password, query):
 
 def data_process(data):
     return data[3] + ":" + data[9]
+
+def janitor_process(data):
+    return data['description']

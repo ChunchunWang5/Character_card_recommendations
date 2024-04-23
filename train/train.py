@@ -18,7 +18,8 @@ from torch.utils.tensorboard import SummaryWriter
 import random
 import pickle
 import time
-from utils.mysql_utils import query_data, data_process
+from utils.mysql_utils import query_data, data_process, janitor_process
+import json
 
 
 def seed_everything(seed=42):
@@ -71,7 +72,7 @@ def train(model, train_loader, dev_loader, optimizer, args):
                 model.train()
                 if best < corrcoef:
                     best = corrcoef
-                    torch.save(model.state_dict(), join(args.output_path, 'simcse.pt'))
+                    torch.save(model.state_dict(), join(args.output_path, 'tipsy.pt'))
                     logger.info('higher corrcoef: {} in step {} epoch {}, save model'.format(best, step, epoch))
 
 
@@ -114,10 +115,11 @@ def load_train_data_unsupervised(tokenizer, args):
     feature_list = []
     if args.file_type == 'local':
         with open(args.train_file, 'r', encoding='utf8') as f:
-            lines = f.readlines()
+            lines = json.load(f)
            # lines = lines[:100]
             logger.info("len of train data:{}".format(len(lines)))
             for line in tqdm(lines):
+                line = janitor_process(line)
                 line = line.strip()
                 feature = tokenizer([line, line], max_length=args.max_len, truncation=True, padding='max_length', return_tensors='pt')
                 feature_list.append(feature)
@@ -197,7 +199,7 @@ def main(args):
         test_dataset = TestDataset(test_data, tokenizer, max_len=args.max_len)
         test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size_eval, shuffle=True,
                                      num_workers=args.num_workers)
-        model.load_state_dict(torch.load(join(args.output_path, 'simcse.pt')))
+        model.load_state_dict(torch.load(join(args.output_path, 'tipsy.pt')))
         model.eval()
         corrcoef = evaluate(model, test_dataloader, args.device)
         logger.info('testset corrcoef:{}'.format(corrcoef))
